@@ -1,0 +1,81 @@
+name: Deploy web/dist to GitHub Pages
+
+# Builds the static site (web/build_models.py: 71 model zips + manifest +
+# vendored Pyodide runtime and wheels) and publishes web/dist as a Pages
+# artifact. Nothing is committed — web/dist stays gitignored.
+#
+# The site is fully relative-path based, so it works under the project
+# sub-path https://<user>.github.io/lifelib-explorer/ without changes.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deploy at a time; let a newer commit finish rather than cancelling it
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true          # lifelib/ — the model sources
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Sync Python env
+        run: uv sync --frozen --no-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Pyodide package (vendored runtime source)
+        run: npm ci
+        working-directory: web
+
+      - name: Build site
+        run: uv run python web/build_models.py
+
+      - name: Sanity-check the build
+        run: |
+          set -e
+          test -f web/dist/index.html
+          test -f web/dist/engine_core.py
+          test -f web/dist/manifest.json
+          test -f web/dist/pyodide/pyodide.mjs          # vendored runtime
+          test -f web/dist/pyodide/pyodide.asm.wasm
+          test -s web/dist/pyodide/wheels.json
+          n=$(ls web/dist/models/*.zip | wc -l)
+          echo "models: $n"
+          test "$n" -ge 70
+          touch web/dist/.nojekyll
+          du -sh web/dist
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
