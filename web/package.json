@@ -14,5 +14,8 @@
   "dependencies": {
     "pyodide": "^314.0.7"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
 }

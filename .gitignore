@@ -32,3 +32,5 @@ modelpoints/
 # web build output
 web/dist/
 web/node_modules/
+# Pyodide wheels build_models.py downloads (keyed by runtime version)
+web/.wheel-cache/

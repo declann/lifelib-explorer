@@ -61,11 +61,24 @@ jobs:
           test -f web/dist/pyodide/pyodide.mjs          # vendored runtime
           test -f web/dist/pyodide/pyodide.asm.wasm
           test -s web/dist/pyodide/wheels.json
+          # the runtime wheels: without these the site boots to
+          # "No module named 'micropip'" (the npm package ships no wheels)
+          for w in micropip numpy pandas; do
+            ls web/dist/pyodide/$w-*.whl
+          done
           n=$(ls web/dist/models/*.zip | wc -l)
           echo "models: $n"
           test "$n" -ge 70
           touch web/dist/.nojekyll
           du -sh web/dist
+
+      # the real gate: boots the built site in Chromium with every external
+      # host blocked, computes, edits a formula, exports and re-loads a model
+      - name: Verify the built site in Chromium (offline)
+        run: |
+          npx playwright install --with-deps chromium
+          node browser_test.mjs
+        working-directory: web
 
       - uses: actions/upload-pages-artifact@v5
         with:
