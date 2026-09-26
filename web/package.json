@@ -1,0 +1,18 @@
+{
+  "name": "lifelib-explorer-web",
+  "version": "1.0.0",
+  "description": "Static web build of lifelib explorer (Pyodide)",
+  "scripts": {
+    "build": "cd .. && uv run python web/build_models.py",
+    "build:fast": "cd .. && uv run python web/build_models.py --no-runtime",
+    "serve": "python3 -m http.server 8080 -d dist",
+    "validate": "node validate.mjs",
+    "test:browser": "node browser_test.mjs",
+    "check": "node --check app.js && node --check worker.js"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "pyodide": "^314.0.7"
+  },
+  "private": true
+}

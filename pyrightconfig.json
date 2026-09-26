@@ -1,0 +1,9 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "include": ["lifelib_explorer", "web/build_models.py", "tests"],
+  "exclude": ["lifelib", "web/dist", "web/node_modules", ".venv"],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true
+}

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lifelib Explorer — in your browser</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="boot" class="boot">
+  <div class="boot-card">
+    <h1>lifelib Explorer</h1>
+    <p>Starting Python in your browser (WebAssembly). First visit downloads
+       ~50&nbsp;MB of runtime; it's cached afterwards.</p>
+    <div class="boot-bar"><div id="boot-progress"></div></div>
+    <p id="boot-status" class="muted">…</p>
+    <p class="muted small">Everything runs client-side — nothing you edit or
+       import leaves this machine.</p>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="mobilebar">
+    <button id="panel-toggle" aria-expanded="false" aria-controls="left">☰ Model</button>
+    <button id="fields-toggle" aria-expanded="false" aria-controls="fields-sheet">Fields</button>
+    <span id="mobile-summary" class="mobile-summary"></span>
+    <span id="mobile-busy" class="mobile-busy" title="computing"></span>
+  </header>
+  <aside class="left" id="left">
+    <label class="lbl">Model</label>
+    <select id="model"></select>
+    <div class="row btns">
+      <button id="export-model" title="Download the model as a modelx zip — with your formula edits and the current model point table">Export model…</button>
+      <button id="load-model" title="Load a modelx model from a zip (e.g. one exported here)">Load model…</button>
+      <input id="model-file" type="file" accept=".zip" hidden>
+    </div>
+
+    <label class="lbl">Model point</label>
+    <div class="row">
+      <select id="point"></select>
+    </div>
+    <div class="row btns">
+      <button id="gen" title="Append synthetic points bootstrapped from the current table">Generate…</button>
+      <button id="import" title="Import model points (CSV)">Import…</button>
+      <button id="export" title="Download the current model point table (CSV)">Export…</button>
+      <input id="import-file" type="file" accept=".csv" hidden>
+    </div>
+
+    <label class="lbl">Results</label>
+    <div id="summary" class="summary">—</div>
+    <div id="error" class="error hidden"></div>
+
+    <div id="fields-sheet" class="fields-sheet">
+      <div class="sheet-head">
+        <label class="lbl">Fields <span class="muted small">(drag sliders — results update live)</span></label>
+        <button id="sheet-close" class="sheet-close" title="Hide fields">✕</button>
+      </div>
+      <div id="fields" class="fields"></div>
+      <button id="reset" disabled title="Ctrl+R">Reset fields</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <nav class="tabs">
+      <button data-tab="formulas" class="active" title="All formulas as cards — click one to see what it reads and what reads it; Show values makes them live">Formulas</button>
+      <button data-tab="inspector" title="Trace one cell: value, formula, invocations, precedents → dependents">Inspector</button>
+      <button data-tab="cashflows">Cashflows</button>
+      <button data-tab="pv">Present values</button>
+      <button data-tab="policies">Policy counts</button>
+      <button data-tab="about">About</button>
+      <span id="busy" class="busy"></span>
+    </nav>
+
+    <section id="tab-inspector" class="tab">
+      <div class="insp-top">
+        <button id="back" title="Back (Alt+←)">◀</button>
+        <button id="fwd" title="Forward (Alt+→)">▶</button>
+        <select id="history" title="History (newest first)"></select>
+        <input id="search" type="search"
+               placeholder="Search cells & tables — name, docstring, formula  (Ctrl+K · ↓ to results)">
+      </div>
+      <div class="insp-body">
+        <ul id="results" class="results"></ul>
+        <div class="detail">
+          <div id="header" class="header">Loading a model …</div>
+          <div class="row inv-row">
+            <span class="lbl-inline">Invocation:</span>
+            <select id="invocations"></select>
+            <span id="params" class="params"></span>
+            <input id="args" placeholder="or type args, e.g. 12 — Enter"
+                   title="Trace a specific invocation (comma-separated literals)">
+          </div>
+          <pre id="value" class="value"></pre>
+          <div class="split">
+            <div class="src-box">
+              <div class="src-bar">
+                <span id="edited-badge" class="badge hidden" title="This cell's formula has been edited in this session">● edited</span>
+                <span class="spacer"></span>
+                <button id="src-edit" class="small-btn" title="Edit this cell's formula (applies to the live model; the model on disk is never changed)">Edit</button>
+                <button id="src-revert" class="small-btn hidden" title="Restore the original formula">Revert</button>
+                <button id="src-apply" class="small-btn primary hidden" title="Apply (Ctrl+Enter)">Apply</button>
+                <button id="src-cancel" class="small-btn hidden" title="Discard (Esc)">Cancel</button>
+              </div>
+              <pre id="source" class="source"></pre>
+              <textarea id="source-edit" class="source hidden" spellcheck="false" wrap="off"></textarea>
+              <div id="src-err" class="src-err hidden"></div>
+            </div>
+            <div id="chart" class="chart"></div>
+          </div>
+          <div id="graph" class="graph"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-formulas" class="tab formulas active">
+      <div class="fx-top">
+        <input id="fx-filter" type="search" placeholder="Filter formulas — name, space, docstring">
+        <label class="fx-toggle" title="Show each cell's values from the last computation: a sparkline over t with the value at the selected t (like the Inspector's graph cards). Updates live as you change fields."><input type="checkbox" id="fx-values"> Show values</label>
+        <span id="fx-tctl" class="fx-t hidden" title="The projection step whose value is shown on every card (red marker). Open in Inspector traces this invocation.">
+          <span class="muted">at</span> <b>t</b> = <input id="fx-t" type="number" min="0" step="1" value="0"> <input id="fx-trange" type="range" min="0" max="120" step="1" value="0">
+        </span>
+        <span class="fx-legend"><span class="sw sel"></span>selected <span class="sw prec"></span>reads (precedents) <span class="sw dep"></span>read by (dependents) <span class="sw ref"></span>table <span class="only-values"><span class="sw mark"></span>value at t</span></span>
+        <span id="fx-count" class="muted small"></span>
+      </div>
+      <div class="fx-body">
+        <div id="fx-cards" class="fx-cards"></div>
+        <div class="fx-side">
+          <div id="fx-header" class="header muted">Click a formula card</div>
+          <div id="fx-doc" class="muted small"></div>
+          <pre id="fx-source" class="source"></pre>
+          <div class="fx-lists">
+            <div><div class="fx-lt prec">reads</div><div id="fx-precs" class="chips"></div></div>
+            <div><div class="fx-lt dep">read by</div><div id="fx-deps" class="chips"></div></div>
+          </div>
+          <div class="row"><button id="fx-inspect" class="small-btn" disabled title="Trace this cell's values and cached invocations in the Inspector">Open in Inspector ↗</button></div>
+        </div>
+      </div>
+    </section>
+    <section id="tab-cashflows" class="tab"><div id="cf-chart" class="bigchart"></div></section>
+    <section id="tab-pv" class="tab"><div id="pv-chart" class="bigchart"></div></section>
+    <section id="tab-policies" class="tab"><div id="pol-chart" class="bigchart"></div></section>
+    <section id="tab-about" class="tab about">
+      <h2>lifelib Explorer</h2>
+      <div class="bio">
+      <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener" title="Declan Naughton"><img class="me" src="dec.jpg" alt="Declan Naughton" width="120" height="160"></a>
+      <p class="byline">by <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener">Declan Naughton</a></p>
+      <p>An <b>experimental</b> explorer for
+         <a href="https://lifelib.io" target="_blank" rel="noopener">lifelib</a>'s
+         Python actuarial models — interactive and visual, built as a technology
+         demo for interactive Python models running in your browser.</p>
+      <p>lifelib is a collection of free and open-source actuarial models
+         started by
+         <b><a href="https://www.linkedin.com/in/fumito-hamamura/" target="_blank" rel="noopener">Fumito Hamamura</a></b>,
+         built on his <a href="https://modelx.io" target="_blank" rel="noopener">modelx</a>
+         framework.</p>
+      <p>Here you can:</p>
+      <ul>
+        <li>Choose from a selection of models, or upload your own (many don't
+            work yet, or aren't well suited)</li>
+        <li>Interactively explore and manipulate model points, with cashflows
+            recomputing as you drag</li>
+        <li>Trace any cell's formula, value and precedents/dependents through
+            modelx's graph, including the tables it reads</li>
+        <li>Edit formulas and see the effects immediately, then download the
+            modified model as a modelx zip (not an optimised workflow yet)</li>
+      </ul>
+      </div>
+      <p>Fast feedback in modelling workflows — interpretation and
+         communication as much as for development — is a keen interest of
+         mine. <a href="https://actuarialplayground.com" target="_blank" rel="noopener">Actuarial Playground</a>
+         gets its fast, interactive feedback from being based on calculang
+         compiled to JavaScript<sup>*</sup>. lifelib Explorer shows that,
+         thanks to <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>
+         and WebAssembly, we can get a similar experience from Python
+         actuarial models: Python runs in the browser, with no server or
+         backend complexity.</p>
+      <p>It works on mobile — and there is also a PyQt desktop
+         application.</p>
+      <p><b>How it was made.</b> This was also an experiment in process: the
+         code was largely written by LLMs, driven from a
+         terminal session in <code>tmux</code> — once on the web, a good part
+         of it from my phone. It is <b>largely vibe-coded</b>: I steered
+         technical and design choices and checked the behaviour, not much of
+         the code, so <b>expect bugs</b>.</p>
+      <p>I continue to develop other modelling work and research through
+         <a href="https://calculang.dev" target="_blank" rel="noopener">calculang</a>.
+         In 2025 I presented some aspects around this to the Society of
+         Actuaries in Ireland, a presentation which is available
+         <a href="https://www.youtube.com/watch?v=3C1mojRzfBA" target="_blank" rel="noopener">on YouTube</a>. That presentation included Actuarial Modeller - on which some design elements here are based & still a WIP - feedback welcome!</p>
+      <p class="muted small footnote"><sup>*</sup> While calculang relies on
+         JavaScript now, thanks to WebAssembly future-calculang might not — and
+         without sacrificing its core aims.</p>
+
+      <h3>Keyboard</h3>
+      <table>
+        <tr><td><code>Ctrl+K</code></td><td>focus the Inspector search</td></tr>
+        <tr><td><code>↓</code> / <code>Enter</code> in search</td><td>move into results / open the selected cell</td></tr>
+        <tr><td><code>Alt+←</code> / <code>Alt+→</code></td><td>Inspector history back / forward</td></tr>
+        <tr><td><code>Ctrl+R</code></td><td>reset the point's fields</td></tr>
+        <tr><td><code>Ctrl+Enter</code> / <code>Esc</code> in the formula editor</td><td>apply / cancel the edit</td></tr>
+      </table>
+      <p id="versions" class="muted small"></p>
+      <p class="muted small">lifelib Explorer is released under the
+         <a href="https://opensource.org/license/mit" target="_blank" rel="noopener">MIT License</a>.
+         lifelib models are MIT-licensed by their authors and are not modified.</p>
+    </section>
+  </main>
+</div>
+<div id="status" class="statusbar"></div>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>

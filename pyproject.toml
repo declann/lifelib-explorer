@@ -1,0 +1,58 @@
+[project]
+name = "lifelib-explorer"
+version = "0.1.0"
+description = "PyQt desktop app for exploring lifelib actuarial models interactively — reactive model-point editing and a dependency-graph inspector"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Declan Naughton" }]
+keywords = ["actuarial", "lifelib", "modelx", "insurance", "pyqt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.6",
+    "modelx>=0.25",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "matplotlib>=3.8",
+    "scipy>=1.15.3",
+    "pyarrow>=25.0.1",
+]
+
+[project.scripts]
+lifelib-explorer = "lifelib_explorer.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lifelib_explorer"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.8",
+]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["lifelib", "web/dist", "web/node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# E501 line length; E741 `l` for line dicts is idiomatic here; B905 zip strict
+# is noise on Python-3.10-compatible code
+ignore = ["E501", "E741", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "E701", "E702"]       # scripts: env setup before imports, compact steps
+"lifelib_explorer/inspector.py" = ["E402"] # highlighter section imports mid-file by design
+"lifelib_explorer/main.py" = ["E702"]

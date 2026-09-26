@@ -1,0 +1,305 @@
+# Agent notes for lifelib-ui
+
+Read this first. It is the handover between sessions: what the project is,
+how it is wired, what is verified, what is known-rough, and which tools to
+reach for. Keep it current — update it when you change conventions.
+
+## What this is
+
+A lifelib (actuarial model) explorer with two front-ends over one engine:
+
+| Layer | Path | Notes |
+|---|---|---|
+| Engine (pure Python, **shared**) | `lifelib_explorer/engine_core.py` | `ModelSession`: load / load_bytes / compute / inspect / set_points / **set_formula / reset_formula / export_model** / **cell_graph / cell_values**; result synthesis for Past Libraries; JSON helpers (`*_json`); `zip_model_dir` / `extract_model_zip` (one zip layout for build + export + load). No Qt. |
+| Desktop (PyQt6) | `lifelib_explorer/{main,engine,inspector,widgets,formulas}.py` | `engine.py` is only the QThread wrapper. Inspector = search, invocation selectors, highlighted source, value chart, sparkline-card dependency graph. `formulas.py` = the Formulas tab (card grid, QPainter sparklines). `widgets.py` also holds the chart y-mode (`YMode`/`YModeBar`/`LinesChart`). |
+| Web (Pyodide/WASM, static) | `web/{index.html,app.js,styles.css,worker.js}` → built into `web/dist/` | Same `engine_core.py` in a **module** web worker. Hand-rolled SVG charts, DOM cards. Vendored runtime; no CDN needed. |
+| Model packaging | `web/build_models.py` | Zips 71 supported models (via `engine_core.zip_model_dir`) + manifest (lifelib's taxonomy) + vendors Pyodide/wheels. |
+| Vendored lifelib | `lifelib/` | **Git submodule** (v0.17.1+`delib`, `7668467`). **Read-only. Never edit.** Verified unmodified (`find lifelib -newer …` = 0). |
+
+Docs: `README.md` (architecture, execution model, options considered — keep
+it honest), `LICENSE` = **MIT** (2026-09-26; was AGPL-3.0-only earlier the
+same day — lifelib itself is MIT too). `pyproject.toml` `license`/classifier,
+README "License" section and the About licence line all say MIT; keep them in
+step.
+
+## Core mechanics you must not break
+
+- **Edits never mutate models on disk.** A model point edit = copy the table,
+  apply edits, `setattr(space, name, df)` (ref reassignment / cell input /
+  dict for Past-Library mappings). modelx invalidates dependents itself.
+- **Pyodide crash recovery** (web, 2026-09-26). A Pyodide *fatal error*
+  (WASM stack overflow, heap exhaustion, memory corruption) poisons the
+  runtime: every later `pyodide.*` access throws `Pyodide already fatally
+  failed and can no longer be used.` The worker hooks `py._api.on_fatal`
+  (private API, wrapped) → posts `{cmd:"crashed", error, stack, heapMB}` and
+  answers every further request with an error. `app.js recoverFromCrash`:
+  `snapshotSession()` (model, point, field edits, formula edits, inspector
+  history, Formulas `t`), reject pending, `worker.terminate()`, `flash()`
+  toast (visible on mobile — the `#error` banner is not), `startWorker()`,
+  await `ready`, `loadModelWith(name, doLoad, snap)` which **re-applies the
+  formula edits** (`reapplyFormulaEdits`) and restores point/fields/history,
+  then recompute. Retry cap `MAX_CRASH_RESTARTS = 3` consecutive (reset on a
+  successful compute). Afterwards a **sticky** `#error` banner ("crashed and
+  was restarted — details" = the JS stack + heap size) stays until dismissed
+  or a deliberate model load (`clearError(true)`). `showError` is a no-op
+  while `state.restarting`. Test hook: `window.__playground.simulateCrash()`
+  → worker `_crash` → Pyodide's real `fatal_error`; browser_test drives it.
+  **Root cause of the crash Dec saw is unknown** — not recursion (Python
+  3.14 keeps pure-Python frames off the C stack; modelx's executor is
+  trampolined and raises `DeepReferenceError` at 100 000). The toast/banner
+  now records the cause (`RangeError: Maximum call stack size exceeded` vs
+  `WebAssembly.Memory.grow` OOM) and the heap size — ask for it next time.
+- **Threading/coalescing.** One worker owns the model. Requests carry a `seq`;
+  the worker drops stale compute/inspect (`latest_seq`). Trailing-edge
+  throttle with adaptive interval (`clamp(150ms, 1.2×last compute, 3s)`).
+  Same design in `worker.js` (`latest` map) — keep them in lockstep.
+- **Tracing = modelx node graph.** `node.precedents` (includes table
+  `ReferenceNode`s; `preds` does not), `cells.succs(args)`. Only cached nodes
+  are traceable → the last computed ItemSpace is kept alive, not cleared.
+- **Payload shape** (`inspect`): `{space,name,args,params,doc,source,
+  value_repr,value_data,series{param,lines[{key,label,x,y}]},cached,
+  preds[],succs[],error}`; groups carry `kind` (cell|ref), `args_list`,
+  `marks` (full arg tuples), `series`, `frame`, `consumed_sum`. The web
+  receives the `*_json` versions (frames → `{columns,index,data,dtypes}`,
+  NaN → null; bool before int in `_scalar`).
+- **Formula edits** (`set_formula`) go to the **base** space via
+  `_base_cells`, never `_last_item` (ItemSpaces are regenerated by modelx).
+  Validated first: `compile()`, and the `def` must keep the cell's name
+  (modelx would silently rename otherwise). `_edits[(space,name)] =
+  {orig,new}`; setting the original back removes the entry; `load()` clears
+  all. Payloads carry `edited`; so do `cells_index` entries.
+- **Export** (`export_model`) = `_restore_table()` → `mx.write_model(tmp)` →
+  restore `model.path` → `zip_model_dir` → bytes. Two traps, both covered by
+  tests: (1) `compute()` leaves a per-point override on the table ref (a
+  one-row table for `_M/_ME`), so the table must be rebound first — the
+  original object if unchanged (keeps the xlsx iospec), else `_mpt`;
+  `clear_at()` for cell-kind tables; (2) `write_model` **re-points
+  `model.path`** at the output dir — Reference libs read
+  `_model.path.parent/*.csv` at run time, so it is set back before the temp
+  dir is deleted. Export invalidates caches → UIs recompute right after.
+- **Length-1 values are scalars** (`_unwrap`, 2026-09-26). `_M/_ME` models
+  vectorise over points; on the one-row table every per-`t` cell returns a
+  length-1 Series/ndarray. `_value_repr`, `_cached_series`, `_group_nodes`,
+  `inspect` and `cell_values` all unwrap first — otherwise cards say
+  `Series len=1`, sparklines/Σ vanish and the value chart is a 1-bar chart.
+  Don't "simplify" that away.
+- **Static formula graph** (`cell_graph`, 2026-09-26): edges
+  `[reader, read]` keyed `"Space.path.name"` like `cells_index`, read off
+  formula sources with `ast` — bare names → cells/table refs of the same
+  space; `X.y` / `X[k].y` / `X().y` resolved through ref `X` when it is a
+  space; refs bound to a Cells → that cell. Self-recursion omitted. Beware:
+  modelx *spaces* also have `.formula`/`.parameters` (`is_cells` must exclude
+  them) and refs can point at **deleted** modelx objects (ifrs17sim) — every
+  helper is wrapped. ≤ 41 ms on the biggest model; included in `load()` and
+  re-derived after each formula edit (`cell_graph` command / worker slot).
+- **Per-cell values** (`cell_values`): `{key: {series, value_repr, frame,
+  args, n_cached}}` for every *cached* cell (uncached are absent → UI says
+  "not computed"); fetched only when the Formulas tab is visible with
+  "Show values" on and a compute happened since (`fxValuesStale` /
+  `mark_values_stale`). ~60–560 KB JSON per fetch, so never fetch blindly
+  per compute.
+- **Load from zip** (`load_bytes`) extracts to a temp dir kept for the
+  session (`_tmpdirs`), accepts `model/…`, root-level, or single-folder
+  layouts (`extract_model_zip`, zip-slip guarded). Web: `loadedName =
+  "user:<name>"`, bytes kept in `state.userModels` for re-selection.
+- **Model-point table layouts** handled by `_find_model_point_table`:
+  DataFrame ref (basiclife/savings), no-arg cell (reference libs, table in
+  `Data`), ExcelRange mapping keyed `(PolicyID, attr)` (Past Libraries;
+  override on `Projection.Policy`). Multi-param projections fix extra params
+  at their defaults parsed from the space's lambda (`ScenID=1`).
+- **Dtypes in the editor**: bool → checkbox, nullable numeric → N/A checkbox
+  (NaN is semantic — "override absent"), nullable categorical → `«N/A»`,
+  unhashable → read-only. Don't "fix" NaN to 0.
+
+## Verified state (end of last session)
+
+All green, run before/after any change:
+
+```bash
+uv run python tests/test_gui_smoke.py        # desktop: load, point switch, edit, charts (offscreen Qt)
+uv run python tests/test_gui_inspector.py    # desktop: search → result_cf → card click → cached pick → history → formula edit (bad/good) → export → revert → load zip
+uv run python tests/test_engine_families.py  # engine: BasicTerm_S/M, CashValue_ME edits change PVs; set_formula/export/load_bytes round-trips (ref, cell, mapping kinds)
+cd web && node validate.mjs                  # Pyodide (Node): 12 models across all 4 categories + 5 formula/export/load round-trips (write_model on MEMFS, bytes→Uint8Array)
+cd web && node browser_test.mjs              # real Chromium, ALL external hosts blocked: boot, compute, slider, model switch, formula edit → download zip → load it back
+```
+
+Verified manually via playwright-cli: Edit/Apply/Revert at 1280 and 390 px;
+syntax error and renamed-`def` rejected inline; `beforeunload` guard fires
+when edits are pending.
+
+Verified manually via playwright-cli at 390×844: per-parameter invocation
+selectors (`k=`, `life=` on `PA_UK_S.lives_if`), values on non-`t` cards,
+Fields bottom sheet, results dropdown, syntax highlighting + clickable cell
+refs.
+
+Added 2026-09-26 (all covered by the tests above): `_unwrap`; `cell_graph`
+(unknown-key check across all 71 models); `cell_values`; y-mode charts
+(browser_test clicks the three modes; smoke test checks axes count/ylabel);
+Formulas tab (browser_test + test_gui_inspector: card roles sel/prec/dep/
+both, show values, t slider → caption/header/button, Open in Inspector
+traces `pols_if(12)`).
+
+**lifelib bump 2026-09-26** (v0.17.0 → `7668467`): two new reference
+libraries, `krlib` (Korean, 10 products) + `delib` (German, 10 products), all
+20 supported out of the box — same layout as uslib/jplib (table in
+`Data.model_point_table()`, input CSVs beside the model dir), so only
+`LIBRARY_CATEGORY` needed the two new keys (otherwise they fall into "Other").
+17 of the 20 define **no PV cells at all** → `result_pv is None` is normal:
+the summary says "(no result_pv in this model)" and the *Present values* tab
+renders empty (pre-existing behaviour, `Term_US_S` etc. already did this).
+Slowest are `Pflege_DE_S` ≈11 s and `Cancer_KR_S` ≈10 s per compute (like
+`BasicTerm_M`, not slider material). Product dir names now collide across
+markets (`term_life/Term_{US,JP,KR}_S`, `whole_life/…`, `cancer/…`,
+`variable_annuity/…`, `immediate_annuity/…`) — labels stay `<product> /
+<model>` since the model name carries the market suffix. Also fixed:
+`tests/test_engine_families.py` had an **absolute path to a stale sibling
+checkout** (`repos/lifelib-ui/…`) and so tested 61 old models; it now uses
+`find_lifelib_root()`. New coverage: all 20 load/compute/switch-point +
+category + formula-edit/export/round-trip on `Term_KR_S`/`RLV_DE_S`
+(test_engine_families), `Term_KR_S`/`RLV_DE_S` in `validate.mjs` targets and
+one round-trip, and a browser_test step that switches to both and asserts
+cashflow-only rendering.
+
+Supported: **71 of 81** models. Not supported, with reasons in
+`engine_core.UNSUPPORTED` (shown as tooltips): `TradLife_A*` (policy attrs
+flow via `PolicyAttrs.pol` arrays), `IntegratedLife` (Run×product×segment),
+`fastlife` (vectorized Series per t), `solvency2` (point id is 2nd param),
+3 asset/ESG models (no model points), `BasicTerm_ME_for_Cluster`.
+
+## Known rough edges / next candidates
+
+- **Formulas tab** (2026-09-26, web + Qt in lockstep): static view; in
+  "Show values" mode cards refetch after every compute while visible. Ideas
+  not done: transitive (indirect) highlighting with lighter shades; a
+  per-card "why" (which `t` of the precedent was read — that is the
+  Inspector's job); the mobile toolbar takes 4 rows at 390 px.
+- **Y-mode**: `independent` scales each line by its own max |y| so all lines
+  keep one zero line — half the plot is empty for one-signed data; that is
+  the price of a shared zero. `multiples` on the small Inspector chart gives
+  ~35 px panels on the desktop (matplotlib can't scroll); the web host
+  scrolls (`.chart.scroll`).
+
+- **Plan A (formula editing, model export/load) is DONE** — see
+  `docs/PLAN-edit-export-load.md`. Remaining there: **B** (table editor:
+  commit slider edits to the table, add/delete points, xlsx import in the
+  web) and **C** (sessions: URL hash + JSON file). Not yet handled in A:
+  editing *refs* (tables) and editing cells of an ItemSpace-only space.
+- Mobile Fields sheet: fixed (2026-09-20). `.left` stays rendered on mobile;
+  `.app:not(.panel-open) .left > :not(.fields-sheet)` is hidden instead
+  (`styles.css`). Sliders + charts show together by default; verified at
+  390×844.
+- The web `#error` banner lives in `.left`, so on mobile a *compute* error
+  is invisible unless the ☰ panel is open (formula errors are shown inline
+  in the editor, so they're fine). Move the banner into `.main` or mirror it
+  in the mobile bar — or use the new `flash()` toast, which is fixed-position
+  and visible everywhere.
+- ~~The Cashflows big chart is clipped on the right at 390 px~~ fixed
+  2026-09-26: charts size to the host's content box (`hostSize`).
+- Mobile bar summary shows `pt 1` without the headline value until the next
+  compute after the Fields sheet auto-opens (ordering of `renderSummary` vs
+  `setFields`); and it's cramped on 390 px — consider dropping the label.
+- `docs/screenshot-*.png` are regenerated ad hoc. README (2026-09-26) leads
+  with three **web** Formulas-tab shots, current as of the dot-only marker /
+  50 % `t=` caption: `screenshot-web-formulas-basicterm.png` (1280×920,
+  `pols_if` selected, `t=60`, grid scrolled to top),
+  `screenshot-web-formulas-cashvalue.png` (same, `CashValue_SE`, `av_pp_at`,
+  `t=61`) and `screenshot-web-formulas-mobile.png` (390×844, same selection).
+  Recipe: playwright-cli → pick model via `#model` select + `change` event →
+  click `.card.fx[data-key="Space.name"]` → set `#fx-trange` + `input` event →
+  `#fx-cards.scrollTop = 0` → `screenshot --filename`. `fxSelect`/`fxSetT`/
+  `navigate` are **not** globals (`app.js` is an IIFE) — to land in the
+  Inspector on `cell(t)`, click the Formulas card, set `t`, then click
+  `#fx-inspect` ("Open pols_if(12) in Inspector"). `screenshot-inspector.png`
+  (1280×920, `BasicTerm_S`, `pols_if(12)`) and `graph-cards.png` (element shot
+  of `#graph`, 640×462, via `playwright-cli run-code "async page => page
+  .locator('#graph').screenshot({path})"`) are now **web** shots too, taken the
+  same day. All five README images are web; no desktop shots remain in it. The
+  other `docs/screenshot-*.png` are unreferenced history.
+- `BasicTerm_M` recompute ≈10 s (per-`t` MultiIndex reindex in the model);
+  not slider material. nomx export would fix speed but loses tracing.
+- Web `Import…` accepts CSV only; desktop also Parquet/Excel.
+- The not-yet families above are each ~a half-day: `TradLife_A` needs an
+  adapter that injects via `PolicyAttrs`; `IntegratedLife` a run/segment
+  picker; `solvency2` a param-order option.
+
+## Workflow
+
+- **Playwright-cli gotcha**: after the page changes, `click e<N>` refs from
+  an old snapshot silently no-op every other time — drive state changes via
+  `eval` with `document.getElementById(...).click()` when scripting a flow,
+  and measure after `sleep 0.6` (CSS transitions are 0.2 s). A pending
+  formula edit makes `reload` hang on the `beforeunload` dialog →
+  `dialog-accept`.
+- **Desktop tests set `y_mode.set("shared")` first** — the y-mode is
+  persisted via `QSettings("lifelib-playground")`, so a previous manual run
+  would otherwise change the axes count the smoke test asserts.
+- **Rebuild the web after touching** `engine_core.py`, `web/app.js`,
+  `worker.js`, `styles.css`, `index.html`:
+  `uv run python web/build_models.py --no-runtime` (fast). Full build (with
+  `npm install` done once in `web/`) also vendors Pyodide + wheels (~39 MB
+  `dist/`: 13 MB models, 26 MB runtime). If a previous build ran as another
+  user, `shutil.copy` dies with `PermissionError … Operation not permitted`
+  on `dist/engine_core.py` (it can't `chmod` a file it doesn't own) — clear
+  the outputs but keep the vendored runtime:
+  `find web/dist -mindepth 1 -maxdepth 1 ! -name pyodide -exec rm -rf {} +`.
+  **Serve `web/dist/`, never `web/`** — the worker now says so
+  loudly on a 404, but stale-`dist` confusion has cost time twice. If the
+  user reports "not seeing X" on the web, first ask/verify they rebuilt and
+  hard-refreshed; `browser_test.mjs`/playwright-cli show the truth.
+- `browser_test.mjs` spawns **its own** server (`python3 -m http.server 8765
+  -d dist` from `web/`), so it always tests the fresh build regardless of what
+  is on 8080 — trust it over a manual browser session. It leaks that server if
+  you interrupt the run; `kill` the pid.
+- Playwright browsers live in `~/.cache/ms-playwright` **per user**: playwright
+  1.63 wants `chromium_headless_shell-1243`, and a cache populated by another
+  user doesn't count. `cd web && npx playwright install chromium` (~1 min).
+- Desktop tests need `QT_QPA_PLATFORM=offscreen` (the test files set it).
+- Python env is uv-managed: `uv run …`, `uv add …`. There is **no pip** in
+  the venv; `build_models.py` borrows one via `uv run --with pip` to download
+  wheels.
+
+## Tools — what to use for what
+
+- **playwright-cli skill** (load it first for any browser work): open →
+  `snapshot` → act on `e<N>` refs; `eval` for state — `window.__playground
+  .state` exposes the app state and `.simulateCrash()` the Pyodide crash; `resize 390 844` for
+  mobile; `screenshot --filename=docs/….png`. Gotchas: expressions containing
+  `=>` are treated as callbacks (`result is not a function`) — wrap in
+  `(function(){ … })()`; wrap calls in `timeout 30 …` (a hung CLI otherwise
+  eats the tool timeout); `close`/`kill-all` when done.
+- **Playwright (Node, `web/node_modules`)**: only for what the CLI can't do —
+  `browser_test.mjs` blocks all external hosts with `page.route`. Don't add
+  more ad-hoc scripts; extend that one.
+- **Pyodide in Node** (`web/validate.mjs`): fastest way to check engine
+  changes under the *browser* Python stack (3.14 / pandas 3.0) without a
+  browser. Use it after engine edits before touching the UI.
+- **uv** for everything Python (`uv run`, `uv add`, `uv sync`).
+- **ruff** (dev dep): `uv run ruff check lifelib_explorer web/build_models.py
+  tests` — baseline is clean; config in `pyproject.toml` (accepted ignores
+  documented there). Run it before finishing a change.
+- **pyright / LSP**: `pyrightconfig.json` points the LSP at `.venv`. If the
+  editor diagnostics still say `Import "pandas" could not be resolved`, the
+  LSP needs a restart — those are venv-resolution noise, not code errors.
+  Real type findings from the LSP were useful (`None` narrowing) — heed them.
+- **Tests are plain scripts by design** (Qt event loop drives them, no
+  pytest): `uv run python tests/<file>.py`; they print `… OK` and exit 0.
+  Add new checks to an existing file rather than creating one-off scripts in
+  `/tmp` — those were lost between sessions once.
+- **Node 25 / npm** in `web/`: `npm run check` (syntax), `npm run build:fast`,
+  `npm run serve`, `npm run validate` (Pyodide in Node), `npm run
+  test:browser` (Chromium, offline). See `web/package.json`.
+- **explore subagent (Task tool)** for codebase questions; the UX review it
+  produced was accurate and file:line-precise — good for "review X" asks.
+- **Read** renders PNGs: read `docs/*.png` after screenshots to actually look
+  at the UI rather than trusting DOM metrics.
+
+## Shell gotchas (these cost real time)
+
+- `pkill -f "<pattern>"` kills your own shell if the pattern is in the
+  command line → the tool call hangs. Use `pkill -f "[h]ttp.server 8080"`.
+- Background servers: `(setsid nohup cmd >/dev/null 2>&1 &)`; plain `&` can
+  keep the tool call open.
+- Pyodide boot in Chromium is ~12–16 s; poll with `sleep` + `eval` rather
+  than one long wait.
+- modelx `read_model` emits `SyntaxWarning`s from lifelib sources — filter
+  with `grep -v SyntaxWarning`, don't "fix" the models.

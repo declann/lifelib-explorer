@@ -1,0 +1,4 @@
+[submodule "lifelib"]
+	path = lifelib
+	url = https://github.com/lifelib-dev/lifelib.git
+	branch = main
