@@ -258,6 +258,41 @@ flow via `PolicyAttrs.pol` arrays), `IntegratedLife` (Run×product×segment),
   the venv; `build_models.py` borrows one via `uv run --with pip` to download
   wheels.
 
+### Deployment (GitHub Pages, added 2026-09-26)
+
+- Live at **https://declann.github.io/lifelib-explorer/**. Pages is configured
+  with `build_type=workflow` (no branch), so **nothing is committed**:
+  `.github/workflows/pages.yml` builds `web/dist` on every push to `main`
+  (plus `workflow_dispatch`) and uploads it with `upload-pages-artifact` →
+  `deploy-pages`. ~1.5 min build, 39 MB site (limit is 1 GB).
+- It works under the `/lifelib-explorer/` sub-path only because **every URL in
+  the site is relative** (`href="styles.css"`, `new Worker("worker.js")`,
+  `fetch("manifest.json")`, `LOCAL_URL = new URL("pyodide/", location.href)`).
+  Don't introduce root-absolute paths (`/styles.css`) — they'd 404 on Pages.
+- `astral-sh/setup-uv` publishes **no floating major tag** after v7, so it is
+  pinned exactly (`@v10.2.0`); the `actions/*` ones use majors.
+- **The npm `pyodide` package ships the core runtime only** — 14 files, no
+  wheels (`npm view pyodide@314.0.7 dist.fileCount`). The `.whl` files in a
+  long-lived `web/node_modules/pyodide` come from an older *full* distribution,
+  so `vendor_runtime()` used to "work" locally and produced a wheel-less
+  runtime on any clean checkout: the site then boots to
+  `ModuleNotFoundError: No module named 'micropip'` (that first Pages deploy
+  did exactly this). `vendor_wheels()` now resolves each `RUNTIME_KEEP`
+  package through the vendored `pyodide-lock.json` and takes the wheel from
+  `node_modules` → `web/.wheel-cache/<version>/` (gitignored) → the CDN of the
+  same version, verifying the lock's sha256, and **raises** if one is missing.
+  Names are *lock* names (`python-dateutil`, not `python_dateutil`).
+- The workflow gates the deploy on `node browser_test.mjs` (Chromium, all
+  external hosts blocked) — that is what catches a broken `dist`; the `test -f`
+  checks before it are only fast triage. `playwright` is now a real
+  devDependency (`browser_test.mjs` imported it without being in
+  `package.json`); CI does `npx playwright install --with-deps chromium`.
+- Pages sends `cache-control: max-age=600`, **including for 404s** — after
+  fixing a missing asset, a plain reload can still fail for ~10 min. Hard
+  refresh, and verify with a fresh browser context, not your open tab.
+- `gh` needs `-R declann/lifelib-explorer` in this checkout (`gh run list`
+  alone dies with "dubious ownership" while plain `git` works).
+
 ## Tools — what to use for what
 
 - **playwright-cli skill** (load it first for any browser work): open →
