@@ -1,5 +1,8 @@
 # lifelib Explorer
 
+**Try it in your browser: [declann.github.io/lifelib-explorer](https://declann.github.io/lifelib-explorer/)**
+— no install, no server; Python runs in the page.
+
 An **experimental** explorer for [lifelib](https://lifelib.io)'s Python
 actuarial models — interactive and visual.
 
@@ -29,6 +32,10 @@ experience from Python actuarial models: Python runs in the browser, with no
 server or backend complexity.
 
 It works on mobile — and there is also a PyQt desktop application.
+
+Source: [github.com/declann/lifelib-explorer](https://github.com/declann/lifelib-explorer).
+The web build is deployed to GitHub Pages from `main` by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml).
 
 **How it was made.** This was also an experiment in process: the code was
 largely written by LLMs, driven from a terminal session in

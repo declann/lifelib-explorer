@@ -2,7 +2,8 @@
 
 [![Declan Naughton](lifelib_explorer/assets/dec.jpg)](https://calcwithdec.dev/about)
 
-by [Declan Naughton](https://calcwithdec.dev/about)
+by [Declan Naughton](https://calcwithdec.dev/about) ·
+[source on GitHub](https://github.com/declann/lifelib-explorer)
 
 An **experimental** explorer for [lifelib](https://lifelib.io)'s Python actuarial
 models — interactive and visual.
@@ -42,6 +43,17 @@ I continue to develop other modelling work and research through [calculang](http
 
 \* While calculang relies on JavaScript now, thanks to WebAssembly
 future-calculang might not — and without sacrificing its core aims.
+
+
+## Source
+
+This app: [github.com/declann/lifelib-explorer](https://github.com/declann/lifelib-explorer)
+— issues and feedback welcome; the browser build is at
+[declann.github.io/lifelib-explorer](https://declann.github.io/lifelib-explorer/).
+The models come from
+[github.com/lifelib-dev/lifelib](https://github.com/lifelib-dev/lifelib)
+(vendored unmodified) and run on
+[modelx](https://github.com/fumitoh/modelx).
 
 
 ## Keyboard
