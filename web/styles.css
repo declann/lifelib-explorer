@@ -110,7 +110,15 @@ textarea.source:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #dbe8
 .chart .scalar b { font: 700 26px var(--mono); }
 .bigchart { flex: 1; padding: 10px; position: relative; }
 .graph { position: relative; flex: 1; min-height: 220px; border: 1px solid var(--line); border-radius: 4px; background: #fff; display: grid; grid-template-columns: 1fr 36px 1.15fr 36px 1fr; grid-template-rows: minmax(0, 1fr); gap: 4px; padding: 22px 8px 46px; overflow: hidden; }
-.graph .col { display: flex; flex-direction: column; justify-content: safe center; gap: 5px; min-width: 0; min-height: 0; overflow-y: auto; }
+.graph .col { display: flex; flex-direction: column; justify-content: safe center; gap: 5px; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+/* 5–6 cards on a side: compact them so the last one (often a plain value, e.g. proj_len = 121)
+   is not pushed below the column's edge where overlay scrollbars leave it invisible */
+.graph.dense .col { gap: 3px; }
+.graph.dense .col > .card:not(.cur) { padding: 2px 6px; }
+.graph.dense .col > .card:not(.cur) .sp { height: 14px; margin-top: 1px; }
+.graph.dense .col > .card:not(.cur) .big { margin-top: 2px; font-size: 13px; }
+.graph .col .scrollhint { display: none; position: sticky; bottom: 0; flex: none; height: 18px; margin-top: -18px; line-height: 20px; text-align: center; color: var(--accent); font-size: 12px; background: linear-gradient(rgba(255,255,255,0), #fff 65%); pointer-events: none; }
+.graph .col.overflow .scrollhint { display: block; }
 .graph .arrows { display: grid; place-items: center; color: #b8b8b8; font-size: 22px; }
 .graph .title, .graph .legend { position: absolute; left: 0; right: 0; text-align: center; color: var(--muted); font-size: 11px; }
 .graph .title { top: 3px; } .graph .legend { bottom: 3px; font-size: 10.5px; padding: 0 8px; line-height: 1.25; }
@@ -121,6 +129,7 @@ textarea.source:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #dbe8
 .card:hover:not(.cur):not(.inert) { box-shadow: 0 0 0 2px #b8cbe8 inset; }
 .card .t { color: var(--accent); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .big { display: block; text-align: center; font: 700 14px var(--mono); color: #333; margin-top: 4px; }
+.card.cur .big { font-size: 17px; margin-top: 18px; }   /* value node being viewed: the value, front and centre */
 .card .sp { position: relative; height: 24px; margin-top: 2px; } .card.cur .sp { height: 54px; }
 .card .sp svg { display: block; width: 100%; height: 100%; }
 .card .mk { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--red); border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--red); transform: translate(-50%, -50%); pointer-events: none; }
@@ -131,6 +140,10 @@ textarea.source:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #dbe8
 :root { --prec: #ede7f8; --prec-b: #a98bd6; --dep: #fdebd9; --dep-b: #eaa15e; }
 .fx-top { display: flex; gap: 10px; align-items: center; padding: 8px 10px 4px; flex-wrap: wrap; }
 .fx-top > input { width: 260px; }
+/* selection history: same anatomy as the Inspector's top bar */
+.fx-nav { display: flex; gap: 6px; align-items: center; }
+.fx-nav button { width: 34px; }
+.fx-nav select { width: 220px; }
 .fx-toggle input { width: auto; min-height: 0; margin: 0; }
 .fx-legend { display: flex; gap: 4px 6px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 11.5px; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--line); margin-left: 6px; }
@@ -179,11 +192,14 @@ textarea.source:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #dbe8
 .about { padding: 18px 26px; overflow: auto; max-width: 720px; }
 .about td { padding: 2px 10px 2px 0; }
 .about h3 { margin: 18px 0 6px; font-size: 14px; }
-.about .byline { margin: 0 0 10px; color: var(--muted); }
+.about .byline { margin: 0 0 10px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
 .about ul { margin: 4px 0 10px; padding-left: 22px; } .about li { margin: 3px 0; }
 .about .footnote { margin-top: 14px; }
-.about .me { float: right; width: 120px; height: 160px; object-fit: cover; border-radius: 8px; margin: 0 0 8px 16px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
-.about .bio { display: block; } .about .bio p:first-of-type { margin-top: 0; } .about .bio::after { content: ""; display: block; clear: both; }
+/* author photo: a small, quiet circular avatar beside the byline (the PNG is pre-masked,
+   so the desktop's Qt rich text shows the same circle) */
+.about .me { display: block; width: 56px; height: 56px; border-radius: 50%; flex: none; border: 1px solid var(--line); opacity: .85; transition: opacity .15s; }
+.about .byline a:hover .me { opacity: 1; }
+.about .bio { display: block; } .about .bio p:first-of-type { margin-top: 0; }
 
 /* Python syntax highlighting in the source view */
 .tk-k { color: #0f5fa8; font-weight: 600; } .tk-b { color: #6f42c1; } .tk-s { color: #a31515; }
@@ -249,11 +265,13 @@ a.tk-cell:hover { background: #eaf6ec; }
   .graph .arrows { font-size: 18px; transform: rotate(90deg); height: 24px; }
   .card.cur { min-height: 72px; }
   .statusbar { display: none; }
-  .about { padding: 12px 14px; } .about .me { width: 90px; height: 120px; margin-left: 12px; }
+  .about { padding: 12px 14px; } .about .me { width: 48px; height: 48px; }
   /* formulas: cards on top, the selected formula's source below */
   .fx-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
   .fx-side { border-left: none; border-top: 2px solid var(--cur-b); max-height: 48dvh; overflow: auto; }
   .fx-side .source { max-height: 200px; min-height: 80px; }
   .fx-top input { width: 100%; }
+  .fx-nav select { display: none; }                      /* ◀ ▶ share the filter's row; the dropdown would need one of its own */
+  .fx-top > #fx-filter { flex: 1 1 120px; width: auto; }
   .fx-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }

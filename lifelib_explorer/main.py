@@ -277,8 +277,8 @@ class MainWindow(QMainWindow):
         # window-level shortcuts (work from every tab)
         QShortcut(QKeySequence("Ctrl+R"), self, self._on_reset_clicked)
         QShortcut(QKeySequence("Ctrl+K"), self, self._focus_inspector_search)
-        QShortcut(QKeySequence("Alt+Left"), self, self.inspector.go_back)
-        QShortcut(QKeySequence("Alt+Right"), self, self.inspector.go_forward)
+        QShortcut(QKeySequence("Alt+Left"), self, self._history_back)
+        QShortcut(QKeySequence("Alt+Right"), self, self._history_forward)
 
         # start on BasicTerm_S with the Formulas tab in front (auto-loads)
         default = next((i for i in range(self.model_combo.count())
@@ -291,18 +291,20 @@ class MainWindow(QMainWindow):
                 self.model_combo.setCurrentIndex(default)
 
     def _make_about(self) -> QWidget:
-        photo = Path(__file__).resolve().parent / "assets" / "dec.jpg"
+        # small circular avatar beside the byline (pre-masked PNG: Qt rich
+        # text has no border-radius); same asset as the web's About tab
+        photo = Path(__file__).resolve().parent / "assets" / "dec-avatar.png"
         about = QLabel(
             "<div style='margin:24px; max-width:640px;'>"
             "<h2>lifelib Explorer</h2>"
             "<table cellpadding='0' cellspacing='0'><tr>"
-            "<td valign='top' style='padding-right:16px'>"
+            "<td valign='middle' style='padding-right:10px'>"
             f"<a href='https://calcwithdec.dev/about'><img src='{photo}' "
-            "width='120' height='160'></a></td><td valign='top'>"
-            "<p style='color:#666; margin-top:0'>by "
+            "width='56' height='56'></a></td><td valign='middle'>"
+            "<span style='color:#666'>by "
             "<a href='https://calcwithdec.dev/about'>Declan Naughton</a> · "
             "<a href='https://github.com/declann/lifelib-explorer'>source on "
-            "GitHub</a></p>"
+            "GitHub</a></span></td></tr></table>"
             "<p>An <b>experimental</b> explorer for "
             "<a href='https://lifelib.io'>lifelib</a>'s Python actuarial models "
             "— interactive and visual. This is the PyQt desktop "
@@ -311,7 +313,6 @@ class MainWindow(QMainWindow):
             "models started by <b><a href='https://www.linkedin.com/in/"
             "fumito-hamamura/'>Fumito Hamamura</a></b>, built on his "
             "<a href='https://modelx.io'>modelx</a> framework.</p>"
-            "</td></tr></table>"
             "<p>Here you can:</p>"
             "<ul>"
             "<li>Choose from a selection of models, or load your own (many "
@@ -362,7 +363,8 @@ class MainWindow(QMainWindow):
             "<tr><td><code>↓</code> / <code>Enter</code> in search</td>"
             "<td>move into results / open the selected cell</td></tr>"
             "<tr><td><code>Alt+←</code> / <code>Alt+→</code></td>"
-            "<td>Inspector history back / forward</td></tr>"
+            "<td>history back / forward (Formulas selection or Inspector visit, "
+            "whichever tab is open)</td></tr>"
             "<tr><td><code>Ctrl+R</code></td><td>reset the point's fields</td></tr>"
             "<tr><td><code>Ctrl+Enter</code> / <code>Esc</code> in the formula editor</td>"
             "<td>apply / cancel the edit</td></tr>"
@@ -495,6 +497,20 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.inspector)
         self.inspector.search.setFocus()
         self.inspector.search.selectAll()
+
+    # Alt+Left/Right drive the open tab's history: the Formulas selection
+    # there, the Inspector visit everywhere else (same routing as the web)
+    def _history_back(self) -> None:
+        if self.tabs.currentWidget() is self.formulas:
+            self.formulas.go_back()
+        else:
+            self.inspector.go_back()
+
+    def _history_forward(self) -> None:
+        if self.tabs.currentWidget() is self.formulas:
+            self.formulas.go_forward()
+        else:
+            self.inspector.go_forward()
 
     def _open_in_inspector(self, space: str, name: str, args=None) -> None:
         """Formulas tab → Inspector (double-click / “Open in Inspector”);

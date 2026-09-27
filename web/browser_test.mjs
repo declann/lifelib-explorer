@@ -36,6 +36,35 @@ try {
   }
   console.log("y-mode:", JSON.stringify(ymodes));
   if (ymodes.multiples.panels < 2 || !ymodes.independent.pct || ymodes.shared.on !== "shared" || ymodes.multiples.stored !== "multiples") throw new Error("y-mode control broken");
+  // dependency graph: result_cf reads 6 cells; the 6th (proj_len, a plain value) is a card with
+  // its value. In a 920px-tall window the dense layout fits all six; at 720px the column
+  // scrolls and says so (sticky ▾ hint) until scrolled to the end. Navigating to a value node
+  // must put the value on the centre card (it used to be title-only).
+  const depView = () => page.evaluate(() => {
+    const col = document.querySelector("#graph .col"), cr = col.getBoundingClientRect();
+    const cards = [...document.querySelectorAll("#graph .card:not(.cur)")].map(c => { const r = c.getBoundingClientRect(); return { t: c.querySelector(".t").textContent, big: c.querySelector(".big")?.textContent ?? null, inside: r.top >= cr.top - 1 && r.bottom <= cr.bottom + 1 }; });
+    return { dense: document.querySelector("#graph").classList.contains("dense"), scroll: col.scrollHeight - col.clientHeight, hint: col.classList.contains("overflow") && getComputedStyle(col.querySelector(".scrollhint")).display !== "none", cards };
+  });
+  const settle = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));   // let ResizeObserver deliver
+  await page.setViewportSize({ width: 1280, height: 920 }); await settle();
+  const depTall = await depView();
+  console.log("dep view @920:", JSON.stringify(depTall));
+  const projLen = depTall.cards.find(c => c.t === "proj_len");
+  if (!depTall.dense || depTall.scroll > 0 || depTall.hint || !projLen || projLen.big !== "121" || !depTall.cards.every(c => c.inside)) throw new Error("dep view @920: value card clipped or missing");
+  await page.setViewportSize({ width: 1280, height: 720 }); await settle();
+  const depShort = await depView();
+  await page.$eval("#graph .col", c => { c.scrollTop = c.scrollHeight; });
+  await page.waitForFunction(() => !document.querySelector("#graph .col").classList.contains("overflow"), null, { timeout: 5000 });   // scroll events are async
+  const depScrolled = await depView();
+  console.log("dep view @720:", JSON.stringify({ scroll: depShort.scroll, hint: depShort.hint, projInside: depShort.cards.find(c => c.t === "proj_len").inside }), "-> scrolled:", JSON.stringify({ hint: depScrolled.hint, projInside: depScrolled.cards.find(c => c.t === "proj_len").inside }));
+  if (depShort.scroll <= 0 || !depShort.hint || depScrolled.hint || !depScrolled.cards.find(c => c.t === "proj_len").inside) throw new Error("dep view @720: scroll hint broken");
+  await page.click('#graph .card[title^="Projection.proj_len"]');
+  await page.waitForFunction(() => document.querySelector("#graph .card.cur .t")?.textContent === "Projection.proj_len()", null, { timeout: 30000 });
+  const curBig = await page.$eval("#graph .card.cur", el => el.querySelector(".big")?.textContent ?? null);
+  console.log("centre card on a value node:", curBig);
+  if (curBig !== "121") throw new Error("centre card of a value node is empty");
+  await page.click("#back");                                                    // history back → result_cf
+  await page.waitForFunction(() => document.querySelector("#graph .card.cur .t")?.textContent === "Projection.result_cf()", null, { timeout: 30000 });
   // Formulas tab: cards for every cell, selection follows the Inspector (result_cf), precedents violet
   await page.click('.tabs button[data-tab="formulas"]');
   const fx = await page.$eval("#fx-cards", el => ({ cards: el.querySelectorAll(".card.fx").length, sel: el.querySelector(".card.fx.sel")?.dataset.key, prec: el.querySelectorAll(".card.fx.prec").length, dep: el.querySelectorAll(".card.fx.dep").length }));
@@ -44,6 +73,19 @@ try {
   const fxSrc = await page.textContent("#fx-source");
   console.log("formulas tab:", JSON.stringify(fx), "-> pols_if:", JSON.stringify(fx2), "source:", fxSrc.slice(0, 18));
   if (fx.cards < 40 || fx.sel !== "Projection.result_cf" || fx.prec < 5 || fx2.sel !== "Projection.pols_if" || !fx2.prec || !fx2.dep || !fx2.both || !fxSrc.startsWith("def pols_if")) throw new Error("formulas tab broken");
+  // Formulas selection history: result_cf (load) → proj_len (Inspector card) → result_cf (Inspector ◀) → pols_if (card click);
+  // ◀ ▶ and Alt+←/→ (while this tab is open) replay it without touching the Inspector's own history
+  const fxSel = () => page.$eval("#fx-cards", el => el.querySelector(".card.fx.sel")?.dataset.key);
+  const fxNav = () => page.evaluate(() => ({ back: !document.querySelector("#fx-back").disabled, fwd: !document.querySelector("#fx-fwd").disabled, n: document.querySelectorAll("#fx-history option").length,
+    top: document.querySelector("#fx-history option").textContent, pos: window.__playground.state.fxHistPos, insp: window.__playground.state.histPos, hdr: document.querySelector("#fx-header").textContent.slice(0, 22) }));
+  const h0 = await fxNav();
+  await page.click("#fx-back"); const s1 = await fxSel(); const h1 = await fxNav();
+  await page.keyboard.press("Alt+ArrowLeft"); const s2 = await fxSel();
+  await page.click("#fx-fwd"); const s3 = await fxSel();
+  await page.keyboard.press("Alt+ArrowRight"); const s4 = await fxSel(); const h4 = await fxNav();
+  console.log("formulas history:", JSON.stringify({ h0, s1, h1, s2, s3, s4, h4 }));
+  if (!h0.back || h0.fwd || h0.n !== 4 || !/^▸ .*pols_if/.test(h0.top) || h0.pos !== 3) throw new Error("formulas history not recorded");
+  if (s1 !== "Projection.result_cf" || !h1.fwd || !/result_cf/.test(h1.hdr) || s2 !== "Projection.proj_len" || s3 !== "Projection.result_cf" || s4 !== "Projection.pols_if" || h4.pos !== 3 || h4.n !== 4 || h4.insp !== h0.insp) throw new Error("formulas history navigation broken");
   // "Show values": sparklines + value at t on the cards; t slider drives caption, header and the Open button
   await page.uncheck("#fx-values"); await page.check("#fx-values");            // exercise the toggle (default is on)
   await page.waitForFunction(() => document.querySelectorAll("#fx-cards .card.fx .sp").length > 10, null, { timeout: 60000 });

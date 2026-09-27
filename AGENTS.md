@@ -160,6 +160,54 @@ category + formula-edit/export/round-trip on `Term_KR_S`/`RLV_DE_S`
 one round-trip, and a browser_test step that switches to both and asserts
 cashflow-only rendering.
 
+**2026-09-27 — dep-view value cards + Formulas history** (web + Qt in
+lockstep, all covered by browser_test / test_gui_inspector):
+
+- *Web dep view, "value cards don't render"* was two things, both web-only
+  (Qt already did the right thing in `NodeGraph._card`/`plot`): (1) the
+  **centre card** of a value node (`proj_len()`, a scalar ref) was title-only
+  — `card()` forced `fallback = ""` for `opts.current`; it now shows
+  `value_repr` as `.big` (`renderGraph` passes it only when there is no
+  series/frame, first line only). (2) Groups sort alphabetically and the
+  sixth side card was pushed below the column's edge — `.graph .col` is
+  `overflow-y: auto` but overlay/headless scrollbars are invisible, so it
+  looked missing. `renderGraph` now sets `#graph.dense` when a side has ≥ 5
+  cards (14 px sparklines, tighter gaps → 6 cards fit a 920 px-tall window)
+  and each `.col` gets a sticky `▾` `.scrollhint` (class `overflow`, kept
+  current by `onscroll` + a `ResizeObserver`, so it also updates when the tab
+  becomes visible) for windows where it still scrolls (1280×720: ~160 px).
+- *Formulas selection history*: `◀ ▶ [history ▾]` at the head of the toolbar,
+  same anatomy as the Inspector's. Web: `state.fxHistory/fxHistPos`,
+  `fxSelect(space, name, {fromHistory})` pushes (dedup vs current, truncates
+  the forward branch, cap 200), `fxSyncHistory/fxGoto/fxBack/fxFwd`, reset on
+  load, included in `snapshotSession` and restored by `loadModelWith(keep)`
+  (which now re-selects the Formulas entry rather than the Inspector visit).
+  Qt: `FormulasPanel` reuses `inspector.History/Visit` (`args=None`),
+  `select(…, from_history=)`, `go_back/go_forward/_on_history_pick`. Note the
+  Inspector → Formulas coupling means every Inspector navigation also pushes
+  a Formulas entry (the selection did change). **`Alt+←/→` now drive the open
+  tab's history** — Formulas selection there, Inspector visit elsewhere
+  (`app.js` keydown, `main.py _history_back/_history_forward`); About tables
+  updated. Mobile: `#fx-history` is hidden and `◀ ▶` share the filter's row,
+  so the 390 px toolbar keeps its row count.
+- *About-tab photo → low-impact circle avatar*: `assets/dec-avatar.png`
+  (128×128 RGBA, circle pre-masked so Qt rich text — no `border-radius` —
+  shows the same circle) replaces the floated 120×160 `dec.jpg` portrait in
+  both front-ends; shown at 56 px (48 px mobile) inline with the byline
+  (`.about .byline` is a flex row, `.about .me` 50 % radius, hairline border,
+  `.85` opacity). `dec.jpg` stays in `assets/` as the source only — nothing
+  ships or references it. Recipe (PIL): crop `(78, 122, 218, 262)` of the
+  360×480 photo → LANCZOS to 128 → paste through an ellipse mask drawn at 4×
+  and downsampled → `save(optimize=True)` (~30 KB). `build_models.py` copies
+  the PNG; `about.md` uses an `<img width=56 align=left>`.
+- Test-side gotchas met: `browser_test.mjs` runs at Playwright's default
+  **1280×720**, not the 920 the screenshots use — it now checks both sizes
+  (`setViewportSize`); `scroll` events and `ResizeObserver` deliveries are
+  async, so wait (`waitForFunction` / double `requestAnimationFrame`) before
+  reading classes they set. A stray `http.server 8080` was serving the stale
+  sibling checkout `repos/lifelib-ui/web/dist` — check
+  `readlink /proc/<pid>/cwd` before trusting a manual browser session.
+
 Supported: **71 of 81** models. Not supported, with reasons in
 `engine_core.UNSUPPORTED` (shown as tooltips): `TradLife_A*` (policy attrs
 flow via `PolicyAttrs.pol` arrays), `IntegratedLife` (Run×product×segment),
@@ -172,7 +220,8 @@ flow via `PolicyAttrs.pol` arrays), `IntegratedLife` (Run×product×segment),
   "Show values" mode cards refetch after every compute while visible. Ideas
   not done: transitive (indirect) highlighting with lighter shades; a
   per-card "why" (which `t` of the precedent was read — that is the
-  Inspector's job); the mobile toolbar takes 4 rows at 390 px.
+  Inspector's job); the mobile toolbar takes 4 rows at 390 px (the history
+  `◀ ▶` share the filter's row, so 2026-09-27 did not add one).
 - **Y-mode**: `independent` scales each line by its own max |y| so all lines
   keep one zero line — half the plot is empty for one-signed data; that is
   the price of a shared zero. `multiples` on the small Inspector chart gives

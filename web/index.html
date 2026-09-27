@@ -114,6 +114,11 @@
 
     <section id="tab-formulas" class="tab formulas active">
       <div class="fx-top">
+        <span class="fx-nav">
+          <button id="fx-back" title="Back (Alt+←)" disabled>◀</button>
+          <button id="fx-fwd" title="Forward (Alt+→)" disabled>▶</button>
+          <select id="fx-history" title="Selection history (newest first)"></select>
+        </span>
         <input id="fx-filter" type="search" placeholder="Filter formulas — name, space, docstring">
         <label class="fx-toggle" title="Show each cell's values from the last computation: a sparkline over t with the value at the selected t (like the Inspector's graph cards). Updates live as you change fields."><input type="checkbox" id="fx-values"> Show values</label>
         <span id="fx-tctl" class="fx-t hidden" title="The projection step whose value is shown on every card (red marker). Open in Inspector traces this invocation.">
@@ -142,9 +147,10 @@
     <section id="tab-about" class="tab about">
       <h2>lifelib Explorer</h2>
       <div class="bio">
-      <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener" title="Declan Naughton"><img class="me" src="dec.jpg" alt="Declan Naughton" width="120" height="160"></a>
-      <p class="byline">by <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener">Declan Naughton</a>
-         · <a href="https://github.com/declann/lifelib-explorer" target="_blank" rel="noopener">source on GitHub</a></p>
+      <p class="byline">
+        <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener" title="Declan Naughton"><img class="me" src="dec-avatar.png" alt="Declan Naughton" width="56" height="56"></a>
+        <span>by <a href="https://calcwithdec.dev/about" target="_blank" rel="noopener">Declan Naughton</a>
+         · <a href="https://github.com/declann/lifelib-explorer" target="_blank" rel="noopener">source on GitHub</a></span></p>
       <p>An <b>experimental</b> explorer for
          <a href="https://lifelib.io" target="_blank" rel="noopener">lifelib</a>'s
          Python actuarial models — interactive and visual, built as a technology
@@ -196,7 +202,7 @@
       <table>
         <tr><td><code>Ctrl+K</code></td><td>focus the Inspector search</td></tr>
         <tr><td><code>↓</code> / <code>Enter</code> in search</td><td>move into results / open the selected cell</td></tr>
-        <tr><td><code>Alt+←</code> / <code>Alt+→</code></td><td>Inspector history back / forward</td></tr>
+        <tr><td><code>Alt+←</code> / <code>Alt+→</code></td><td>history back / forward (Formulas selection or Inspector visit, whichever tab is open)</td></tr>
         <tr><td><code>Ctrl+R</code></td><td>reset the point's fields</td></tr>
         <tr><td><code>Ctrl+Enter</code> / <code>Esc</code> in the formula editor</td><td>apply / cancel the edit</td></tr>
       </table>

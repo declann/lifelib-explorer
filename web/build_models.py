@@ -85,7 +85,7 @@ def main() -> int:
         src = ROOT / "web" / name
         if src.exists():
             shutil.copy(src, out / name)
-    shutil.copy(ROOT / "lifelib_explorer" / "assets" / "dec.jpg", out / "dec.jpg")
+    shutil.copy(ROOT / "lifelib_explorer" / "assets" / "dec-avatar.png", out / "dec-avatar.png")
     total = sum(m["bytes"] for m in manifest)
     print(f"\n{len(manifest)} models, {total / 1024 / 1024:.1f} MB total -> {out}")
     if not args.no_runtime:

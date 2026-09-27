@@ -17,6 +17,7 @@ from PyQt6.QtCore import QPoint, QPointF, QRect, QSettings, QSize, Qt, QTimer, p
 from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPainterPath, QPen, QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -33,7 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .inspector import PythonHighlighter
+from .inspector import History, PythonHighlighter, Visit
 
 SPARK_PALETTE = ("#3a76b0", "#4da06a", "#b0763a", "#9a5aa8",
                  "#a83a3a", "#3aa8a0", "#77772e", "#666666")
@@ -402,12 +403,28 @@ class FormulasPanel(QWidget):
         self._by_key: dict[str, dict] = {}
         self._cards: dict[str, FormulaCard] = {}
         self._selected: str | None = None
+        self._history = History()      # selection history (same rules as the Inspector's)
         self._values: dict[str, dict] | None = None
         self._values_stale = True
         self._t: float | None = None
         self._has_range = False        # t spin/slider range set from real series
 
-        # -- top: filter + show values + t + legend ---------------------------
+        # -- top: history + filter + show values + t + legend ------------------
+        self.back_btn = QPushButton("◀")
+        self.back_btn.setFixedWidth(32)
+        self.back_btn.setToolTip("Back (Alt+Left)")
+        self.back_btn.clicked.connect(self.go_back)
+        self.fwd_btn = QPushButton("▶")
+        self.fwd_btn.setFixedWidth(32)
+        self.fwd_btn.setToolTip("Forward (Alt+Right)")
+        self.fwd_btn.clicked.connect(self.go_forward)
+        self.history_combo = QComboBox()
+        self.history_combo.setMinimumWidth(200)
+        self.history_combo.setToolTip(
+            "Selection history (newest first) — pick an entry to jump to it")
+        self.history_combo.activated.connect(self._on_history_pick)
+        self._sync_history_combo()
+        self._update_nav_buttons()
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter formulas — name, space, docstring")
         self.filter.setClearButtonEnabled(True)
@@ -452,6 +469,10 @@ class FormulasPanel(QWidget):
         self.count = QLabel("")
         self.count.setStyleSheet("color: #6b7785;")
         top = QHBoxLayout()
+        top.addWidget(self.back_btn)
+        top.addWidget(self.fwd_btn)
+        top.addWidget(self.history_combo)
+        top.addSpacing(6)
         top.addWidget(self.filter)
         top.addWidget(self.values_box)
         top.addWidget(self.t_label)
@@ -533,6 +554,9 @@ class FormulasPanel(QWidget):
         self._index = index
         self._by_key = {key_of(e["space"], e["name"]): e for e in index}
         self._selected = None
+        self._history = History()
+        self._sync_history_combo()
+        self._update_nav_buttons()
         self._values = None
         self._values_stale = True
         self._t = None
@@ -661,19 +685,67 @@ class FormulasPanel(QWidget):
 
     # -- selection ---------------------------------------------------------------
 
-    def select(self, space: str, name: str, scroll: bool = True) -> None:
+    def select(self, space: str, name: str, scroll: bool = True,
+               from_history: bool = False) -> None:
         key = key_of(space, name)
         e = self._by_key.get(key)
         if e is None:
             return
         changed = key != self._selected
         self._selected = key
+        # selection history: revisiting the current entry is a no-op, a new
+        # selection truncates the forward branch; ◀ ▶ replay without pushing
+        if not from_history:
+            self._history.visit(Visit(space, name, None))
+        self._sync_history_combo()
+        self._update_nav_buttons()
         if changed:
             self._paint()
         self._show_side(e)
         if scroll:
             # deferred: at load time the cards are not laid out yet
             QTimer.singleShot(0, self._scroll_to_selected)
+
+    # -- selection history (◀ ▶ + dropdown; the Inspector has the same trio) ------
+
+    def go_back(self) -> None:
+        v = self._history.back()
+        if v:
+            self.select(v.space, v.name, from_history=True)
+
+    def go_forward(self) -> None:
+        v = self._history.forward()
+        if v:
+            self.select(v.space, v.name, from_history=True)
+
+    def _on_history_pick(self, i: int) -> None:
+        pos = self.history_combo.itemData(i)
+        if isinstance(pos, int) and 0 <= pos < len(self._history.entries):
+            # jump within history (no new entry, forward branch preserved)
+            self._history.pos = pos
+            v = self._history.entries[pos]
+            self.select(v.space, v.name, from_history=True)
+
+    def _sync_history_combo(self) -> None:
+        """Newest first; current entry marked and selected; never blank."""
+        self.history_combo.blockSignals(True)
+        self.history_combo.clear()
+        entries = self._history.entries
+        if not entries:
+            self.history_combo.addItem("History — nothing selected yet", None)
+            self.history_combo.setCurrentIndex(0)
+        else:
+            for pos in range(len(entries) - 1, -1, -1):
+                mark = "▸ " if pos == self._history.pos else "   "
+                self.history_combo.addItem(mark + entries[pos].label, pos)
+            self.history_combo.setCurrentIndex(
+                len(entries) - 1 - self._history.pos)
+        self.history_combo.blockSignals(False)
+
+    def _update_nav_buttons(self) -> None:
+        self.back_btn.setEnabled(self._history.pos > 0)
+        self.fwd_btn.setEnabled(
+            self._history.pos < len(self._history.entries) - 1)
 
     def _scroll_to_selected(self) -> None:
         card = self._cards.get(self._selected or "")

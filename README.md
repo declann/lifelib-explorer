@@ -182,7 +182,7 @@ uv run lifelib-explorer /path/to/models   # or point it elsewhere
 |---|---|
 | `Ctrl+K` | focus the Inspector search |
 | `↓` / `Enter` in search | move into results / open the selected cell |
-| `Alt+←` / `Alt+→` | Inspector history back / forward |
+| `Alt+←` / `Alt+→` | history back / forward — the Formulas selection when that tab is open, else the Inspector visit |
 | `Ctrl+R` | reset the point's fields |
 | `Ctrl+Enter` / `Esc` in the formula editor | apply / cancel the edit |
 
@@ -307,7 +307,9 @@ Edges are **static** — read off the formula sources with Python's `ast`
 the same space and `Space.name` / `Space[k].name` through space references —
 so this works for cells the last computation never touched, and updates
 after a formula edit. The selection follows the Inspector; double-click or
-**Open in Inspector** goes the other way.
+**Open in Inspector** goes the other way. Selections are recorded in their
+own history — `◀`/`▶`, the drop-down, or `Alt+←`/`Alt+→` while the tab is
+open — so you can chase a chain of reads and walk back out.
 
 **Show values** (on by default) turns the cards into the same sparkline
 cards as the dependency graph: each computed cell's step line over `t` from the last

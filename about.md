@@ -1,6 +1,6 @@
 # lifelib Explorer
 
-[![Declan Naughton](lifelib_explorer/assets/dec.jpg)](https://calcwithdec.dev/about)
+[<img src="lifelib_explorer/assets/dec-avatar.png" alt="Declan Naughton" width="56" height="56" align="left">](https://calcwithdec.dev/about)
 
 by [Declan Naughton](https://calcwithdec.dev/about) ·
 [source on GitHub](https://github.com/declann/lifelib-explorer)
@@ -62,6 +62,6 @@ The models come from
 |---|---|
 | `Ctrl+K` | focus the Inspector search |
 | `↓` / `Enter` in search | move into results / open the selected cell |
-| `Alt+←` / `Alt+→` | Inspector history back / forward |
+| `Alt+←` / `Alt+→` | history back / forward — the Formulas selection when that tab is open, else the Inspector visit |
 | `Ctrl+R` | reset the point's fields |
 | `Ctrl+Enter` / `Esc` in the formula editor | apply / cancel the edit |

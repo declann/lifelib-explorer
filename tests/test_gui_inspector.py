@@ -190,6 +190,20 @@ def step_formulas_tab():
     assert roles["Projection.pv_pols_if"] == "dep" and roles["Projection.pols_lapse"] == "both", roles
     assert fx.source.toPlainText().startswith("def pols_if(") and "pols_lapse" in fx.deps.text()
     assert fx.inspect_btn.isEnabled() and fx.inspect_btn.text() == "Open in Inspector ↗"
+    # selection history (◀ ▶ / dropdown): [result_cf, pols_if] since the zip load; replaying never pushes
+    assert [v.name for v in fx._history.entries] == ["result_cf", "pols_if"], fx._history.entries
+    assert fx.back_btn.isEnabled() and not fx.fwd_btn.isEnabled()
+    assert fx.history_combo.itemText(0).startswith("▸ ") and fx.history_combo.itemText(0).endswith("Projection.pols_if")
+    fx.go_back()
+    assert fx.selected_key() == "Projection.result_cf" and fx.fwd_btn.isEnabled() and not fx.back_btn.isEnabled()
+    fx._on_history_pick(0)                          # dropdown: newest entry = pols_if
+    assert fx.selected_key() == "Projection.pols_if" and len(fx._history.entries) == 2
+    # Alt+Left/Right drive the open tab's history: the Formulas selection here, the Inspector's elsewhere
+    win.tabs.setCurrentWidget(fx); insp_pos = win.inspector._history.pos
+    win._history_back()
+    assert fx.selected_key() == "Projection.result_cf" and win.inspector._history.pos == insp_pos
+    win._history_forward()
+    assert fx.selected_key() == "Projection.pols_if" and win.inspector._history.pos == insp_pos
     # show values: cards get sparklines/values at t; t follows the Inspector's invocation
     win.tabs.setCurrentWidget(fx)
     fx.values_box.setChecked(True)

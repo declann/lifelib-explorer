@@ -55,6 +55,7 @@ const state = {
   yMode: "shared",              // multi-line charts: shared | independent | multiples
   graph: null,                  // {edges:[[reader, read]]} static formula graph (Formulas tab)
   fxSel: null,                  // "space.name" selected in the Formulas tab
+  fxHistory: [], fxHistPos: -1, // Formulas selection history [{space,name}] (◀ ▶, Alt+←/→ while the tab is open)
   fxShowValues: false,          // Formulas tab: cards carry sparkline + value at t
   fxValues: null,               // {key: {series, value_repr, frame, args, n_cached}} from engine.cell_values()
   fxValuesStale: true,          // a compute happened since the last fetch
@@ -99,6 +100,7 @@ function snapshotSession() {
     fieldValues: state.fields && state.fields.length ? edits() : null,
     formulaEdits: new Map(state.formulaEdits), current: state.current,
     history: state.history.slice(), histPos: state.histPos, fxT: state.fxT,
+    fxHistory: state.fxHistory.slice(), fxHistPos: state.fxHistPos,
   };
 }
 const MAX_CRASH_RESTARTS = 3;
@@ -190,9 +192,9 @@ async function loadModelWith(name, doLoad, keep = null) {
     state.loaded = info; state.table = info.model_point_table;
     syncModelPicker(info.name);
     state.index = info.cells_index; state.history = []; state.histPos = -1; state.current = null;
-    state.graph = info.cell_graph || { edges: [] }; state.fxSel = null; state.fxValues = null; state.fxValuesStale = true; state.fxT = null;
+    state.graph = info.cell_graph || { edges: [] }; state.fxSel = null; state.fxHistory = []; state.fxHistPos = -1; state.fxValues = null; state.fxValuesStale = true; state.fxT = null;
     if (keep && keep.formulaEdits.size) await reapplyFormulaEdits(keep.formulaEdits);
-    fillPoints(); buildFields(); renderResults(); syncHistory(); renderFormulas(); updateEditCount();
+    fillPoints(); buildFields(); renderResults(); syncHistory(); renderFormulas(); fxSyncHistory(); updateEditCount();
     setStatus(`Loaded ${info.name} in ${info.load_seconds.toFixed(1)}s — ${state.table.index.length} model points, ${info.cells_index.length} cells/tables`);
     setBusy(null);
     if (keep) {
@@ -203,10 +205,16 @@ async function loadModelWith(name, doLoad, keep = null) {
       if (keep.fieldValues) state.fields.forEach(f => { if (f.col in keep.fieldValues) f.set(keep.fieldValues[f.col]); });
       updateDirty();
       state.fxT = keep.fxT;
-      if (keep.current && state.index.some(e => e.space === keep.current.space && e.name === keep.current.name)) {
+      const known = v => !!v && state.index.some(e => e.space === v.space && e.name === v.name);
+      if (keep.fxHistory && keep.fxHistory.length && keep.fxHistory.every(known)) { state.fxHistory = keep.fxHistory; state.fxHistPos = keep.fxHistPos; }
+      if (known(keep.current)) {
         state.history = keep.history; state.histPos = keep.histPos; state.current = keep.current;
-        syncHistory(); highlightResult(); fxSelect(keep.current.space, keep.current.name, { scroll: false });
+        syncHistory(); highlightResult();
+        // the Formulas selection may differ from the Inspector's visit — restore what was selected there
+        const fsel = state.fxHistory[state.fxHistPos] || keep.current;
+        fxSelect(fsel.space, fsel.name, { scroll: false, fromHistory: true });
       } else { const first = defaultCell(info); if (first) navigate(first.space, first.name, null); }
+      fxSyncHistory();
       requestCompute(true);                        // the compute's callback re-inspects the current visit
       return;
     }
@@ -717,7 +725,9 @@ function card(g, opts = {}) {
   const nInv = g.args_list ? g.args_list.length : 0;
   const sp = sparkSVG(g.series, g.marks, g.frame);
   const caption = markCaption(g, sp, opts);
-  const fallback = opts.current ? "" : (nInv > 1 ? (g.consumed_sum != null ? `Σ ${fmtNum(g.consumed_sum, 6)}` : `×${nInv}`) : (g.value_repr ?? ""));
+  // no sparkline/frame -> the value itself, front and centre (also for the current card:
+  // a no-arg cell like proj_len() or a scalar table ref would otherwise be title-only)
+  const fallback = nInv > 1 ? (g.consumed_sum != null ? `Σ ${fmtNum(g.consumed_sum, 6)}` : `×${nInv}`) : (g.value_repr ?? "");
   let html = `<div class="t">${esc(opts.label || shown)}</div>`;
   if (sp) {
     html += `<div class="sp">${sp.svg}${sp.dots.map(d => `<span class="mk" style="left:${d.x}%;top:${d.y}%"></span>`).join("")}</div>`;
@@ -733,9 +743,17 @@ function card(g, opts = {}) {
 const MAX_SIDE = 6;
 function renderGraph(p, loc) {
   const host = $("graph"); host.innerHTML = "";
-  if (!p.preds.length && !p.succs.length) { host.innerHTML = `<div class="msg">no traced dependencies — pick a cached invocation (only nodes touched by the last computation are traceable)</div>`; return; }
+  if (!p.preds.length && !p.succs.length) { host.classList.remove("dense"); host.innerHTML = `<div class="msg">no traced dependencies — pick a cached invocation (only nodes touched by the last computation are traceable)</div>`; return; }
+  // many cards on a side: compact sparklines so all MAX_SIDE fit the column (Qt shrinks
+  // its cards the same way); the columns still scroll (thin bar) if the window is short
+  host.classList.toggle("dense", Math.max(p.preds.length, p.succs.length) >= 5);
   const col = (groups, side) => { const c = document.createElement("div"); c.className = "col"; groups.slice(0, MAX_SIDE).forEach(g => c.appendChild(card(g, { side })));
-    if (groups.length > MAX_SIDE) { const m = document.createElement("div"); m.className = "muted small"; m.style.textAlign = "center"; m.textContent = `… +${groups.length - MAX_SIDE} more (search to reach them)`; c.appendChild(m); } return c; };
+    if (groups.length > MAX_SIDE) { const m = document.createElement("div"); m.className = "muted small"; m.style.textAlign = "center"; m.textContent = `… +${groups.length - MAX_SIDE} more (search to reach them)`; c.appendChild(m); }
+    // short window: the column scrolls — say so (overlay scrollbars are invisible until touched)
+    const hint = document.createElement("div"); hint.className = "scrollhint"; hint.textContent = "▾"; hint.title = "more below — scroll the column"; c.appendChild(hint);
+    const upd = () => c.classList.toggle("overflow", c.scrollHeight - c.clientHeight - c.scrollTop > 2);
+    c.onscroll = upd; new ResizeObserver(upd).observe(c);                     // also fires when the tab becomes visible
+    return c; };
   const arrows = (n) => { const a = document.createElement("div"); a.className = "arrows"; a.textContent = n ? "→" : ""; return a; };
   const call = p.args ? `${loc}(${p.args.map(a => JSON.stringify(a)).join(", ")})` : loc;
   const curFrame = p.value_data && p.value_data.data.length > 1 ? p.value_data : null;
@@ -889,6 +907,15 @@ function fxSelect(space, name, opts = {}) {
   const key = fxKey(space, name); state.fxSel = key; fxPaint();
   const adj = state.fxAdj || fxAdjacency(), e = adj.byKey.get(key);
   if (!e) return;
+  // selection history — same rules as the Inspector's: revisiting the current entry is a
+  // no-op, a new selection truncates the forward branch; ◀ ▶ / Alt+←→ replay without pushing
+  if (!opts.fromHistory) {
+    const cur = state.fxHistory[state.fxHistPos];
+    if (!(cur && cur.space === space && cur.name === name)) {
+      state.fxHistory.splice(state.fxHistPos + 1); state.fxHistory.push({ space, name }); if (state.fxHistory.length > 200) state.fxHistory.shift(); state.fxHistPos = state.fxHistory.length - 1;
+    }
+  }
+  fxSyncHistory();
   const card = $("fx-cards").querySelector(`.card.fx[data-key="${CSS.escape(key)}"]`);
   if (card && opts.scroll !== false) card.scrollIntoView({ block: "nearest" });
   const isRef = e.params === "reference";
@@ -912,6 +939,19 @@ function fxOpenInspector(space, name) {
   const inv = e ? fxInvocation(e, state.fxValues && state.fxValues[fxKey(space, name)]) : null;
   navigate(space, name, inv); document.querySelector('.tabs button[data-tab="inspector"]').click();
 }
+// -- selection history (◀ ▶ + dropdown, newest first; the Inspector has the same trio) ------
+function fxSyncHistory() {
+  const sel = $("fx-history"); sel.innerHTML = "";
+  if (!state.fxHistory.length) { const o = document.createElement("option"); o.textContent = "History — nothing selected yet"; sel.appendChild(o); }
+  for (let pos = state.fxHistory.length - 1; pos >= 0; pos--) { const o = document.createElement("option"); o.value = pos; o.textContent = (pos === state.fxHistPos ? "▸ " : "   ") + visitLabel(state.fxHistory[pos]); sel.appendChild(o); }
+  sel.value = String(state.fxHistPos);
+  $("fx-back").disabled = state.fxHistPos <= 0; $("fx-fwd").disabled = state.fxHistPos >= state.fxHistory.length - 1;
+}
+function fxGoto(pos) { const v = state.fxHistory[pos]; if (!v) return; state.fxHistPos = pos; fxSelect(v.space, v.name, { fromHistory: true }); }
+function fxBack() { if (state.fxHistPos > 0) fxGoto(state.fxHistPos - 1); }
+function fxFwd() { if (state.fxHistPos < state.fxHistory.length - 1) fxGoto(state.fxHistPos + 1); }
+$("fx-back").onclick = fxBack; $("fx-fwd").onclick = fxFwd;
+$("fx-history").onchange = () => { const pos = +$("fx-history").value; if (Number.isInteger(pos)) fxGoto(pos); };
 async function refreshGraph() {
   try { state.graph = await send("cell_graph"); renderFormulas(); if (state.fxSel) { const e = state.fxAdj.byKey.get(state.fxSel); if (e) fxSelect(e.space, e.name, { scroll: false }); } }
   catch (e) { setStatus(`formula graph: ${e.message}`); }
@@ -1063,8 +1103,10 @@ for (const b of document.querySelectorAll(".tabs button")) b.onclick = () => { f
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); document.querySelector('.tabs button[data-tab="inspector"]').click(); $("search").focus(); $("search").select(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") { e.preventDefault(); if (!$("reset").disabled) $("reset").click(); }
-  if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); goBack(); }
-  if (e.altKey && e.key === "ArrowRight") { e.preventDefault(); goFwd(); }
+  // history keys drive the open tab: the Formulas selection there, the Inspector visit elsewhere
+  const fxOpen = () => $("tab-formulas").classList.contains("active");
+  if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); if (fxOpen()) fxBack(); else goBack(); }
+  if (e.altKey && e.key === "ArrowRight") { e.preventDefault(); if (fxOpen()) fxFwd(); else goFwd(); }
 });
 // debug / test hook (browser_test.mjs, playwright-cli): peek at state, simulate a Pyodide fatal error
 window.__playground = { state, simulateCrash: () => worker.postMessage({ cmd: "_crash" }) };
